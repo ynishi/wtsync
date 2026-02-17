@@ -18,21 +18,21 @@ suite "isWorktree":
   setup: setup()
   teardown: cleanup()
 
-  test "存在しないパス → false":
+  test "nonexistent path -> false":
     check not isWorktree(TestBase / "nonexistent")
 
-  test "通常ディレクトリ（.git がディレクトリ） → false":
+  test "regular directory (.git is a directory) -> false":
     let dir = TestBase / "normal_repo"
     createDir(dir / ".git")
     check not isWorktree(dir)
 
-  test ".git がファイル → true":
+  test ".git is a file -> true":
     let dir = TestBase / "worktree"
     createDir(dir)
     writeFile(dir / ".git", "gitdir: /tmp/fake/.git/worktrees/wt")
     check isWorktree(dir)
 
-  test ".git が存在しない → false":
+  test ".git does not exist -> false":
     let dir = TestBase / "empty"
     createDir(dir)
     check not isWorktree(dir)
@@ -45,16 +45,16 @@ suite "resolveMainRepo":
   setup: setup()
   teardown: cleanup()
 
-  test ".git ファイルなし → 空文字列":
+  test "no .git file -> empty string":
     check resolveMainRepo(TestBase / "nonexistent") == ""
 
-  test "不正な .git 内容 → 空文字列":
+  test "invalid .git content -> empty string":
     let dir = TestBase / "invalid"
     createDir(dir)
     writeFile(dir / ".git", "not a gitdir reference")
     check resolveMainRepo(dir) == ""
 
-  test "絶対パスの gitdir → 本体リポパスを返す":
+  test "absolute gitdir path -> returns main repo path":
     let mainRepo = TestBase / "repo"
     let wt = TestBase / "repo-wt"
     createDir(mainRepo / ".git" / "worktrees" / "repo-wt")
@@ -63,12 +63,12 @@ suite "resolveMainRepo":
     let resolved = resolveMainRepo(wt)
     check expandFilename(resolved) == expandFilename(mainRepo)
 
-  test "相対パスの gitdir → 正しく解決される":
+  test "relative gitdir path -> resolved correctly":
     let mainRepo = TestBase / "repo_rel"
     let wt = TestBase / "repo_rel-wt"
     createDir(mainRepo / ".git" / "worktrees" / "repo_rel-wt")
     createDir(wt)
-    # 相対パス: wt から見た mainRepo/.git/worktrees/repo_rel-wt
+    # Relative path: mainRepo/.git/worktrees/repo_rel-wt as seen from wt
     writeFile(wt / ".git", "gitdir: ../repo_rel/.git/worktrees/repo_rel-wt")
     let resolved = resolveMainRepo(wt)
     check expandFilename(resolved) == expandFilename(mainRepo)
@@ -81,13 +81,13 @@ suite "check":
   setup: setup()
   teardown: cleanup()
 
-  test "通常ディレクトリ → wsNotWorktree":
+  test "regular directory -> wsNotWorktree":
     let dir = TestBase / "normal"
     createDir(dir)
     let r = check(dir)
     check r.state == wsNotWorktree
 
-  test "本体リポが見つからない → wsNoMainRepo":
+  test "main repo not found -> wsNoMainRepo":
     let dir = TestBase / "bad_wt"
     createDir(dir)
     writeFile(dir / ".git", "gitdir: /nonexistent/.git/worktrees/x")
@@ -96,7 +96,7 @@ suite "check":
     # Actually it returns a non-empty string, so state depends on workspace check
     check r.state in {wsNoMainRepo, wsNoWorkspace}
 
-  test "workspace/ なし → wsNoWorkspace":
+  test "no workspace/ -> wsNoWorkspace":
     let mainRepo = TestBase / "repo_nows"
     let wt = TestBase / "repo_nows-wt"
     createDir(mainRepo / ".git" / "worktrees" / "repo_nows-wt")
@@ -105,7 +105,7 @@ suite "check":
     let r = check(wt)
     check r.state == wsNoWorkspace
 
-  test "symlink 未作成 → wsNeedsLink":
+  test "symlink not created -> wsNeedsLink":
     let mainRepo = TestBase / "repo_needs"
     let wt = TestBase / "repo_needs-wt"
     createDir(mainRepo / ".git" / "worktrees" / "repo_needs-wt")
@@ -116,7 +116,7 @@ suite "check":
     check r.state == wsNeedsLink
     check r.mainRepo != ""
 
-  test "正しい symlink → wsAlreadyLinked":
+  test "correct symlink -> wsAlreadyLinked":
     let mainRepo = TestBase / "repo_linked"
     let wt = TestBase / "repo_linked-wt"
     createDir(mainRepo / ".git" / "worktrees" / "repo_linked-wt")
@@ -127,7 +127,7 @@ suite "check":
     let r = check(wt)
     check r.state == wsAlreadyLinked
 
-  test "間違ったターゲットの symlink → wsBrokenLink":
+  test "wrong symlink target -> wsBrokenLink":
     let mainRepo = TestBase / "repo_broken"
     let wt = TestBase / "repo_broken-wt"
     createDir(mainRepo / ".git" / "worktrees" / "repo_broken-wt")
@@ -138,7 +138,7 @@ suite "check":
     let r = check(wt)
     check r.state == wsBrokenLink
 
-  test "実ディレクトリの workspace → wsRealDirExists":
+  test "real directory as workspace -> wsRealDirExists":
     let mainRepo = TestBase / "repo_realdir"
     let wt = TestBase / "repo_realdir-wt"
     createDir(mainRepo / ".git" / "worktrees" / "repo_realdir-wt")
@@ -157,7 +157,7 @@ suite "fix":
   setup: setup()
   teardown: cleanup()
 
-  test "wsNeedsLink → symlink 作成":
+  test "wsNeedsLink -> creates symlink":
     let mainRepo = TestBase / "repo_fix"
     let wt = TestBase / "repo_fix-wt"
     createDir(mainRepo / ".git" / "worktrees" / "repo_fix-wt")
@@ -168,11 +168,11 @@ suite "fix":
     check r.state == wsNeedsLink
     check fix(r)
     check symlinkExists(wt / "workspace")
-    # fix 後は wsAlreadyLinked
+    # After fix, state should be wsAlreadyLinked
     let r2 = check(wt)
     check r2.state == wsAlreadyLinked
 
-  test "wsBrokenLink → 再リンク":
+  test "wsBrokenLink -> relinks":
     let mainRepo = TestBase / "repo_relink"
     let wt = TestBase / "repo_relink-wt"
     createDir(mainRepo / ".git" / "worktrees" / "repo_relink-wt")
@@ -187,15 +187,15 @@ suite "fix":
     let r2 = check(wt)
     check r2.state == wsAlreadyLinked
 
-  test "wsNotWorktree → fix しない":
+  test "wsNotWorktree -> no fix":
     let r = CheckResult(path: "/tmp", state: wsNotWorktree)
     check not fix(r)
 
-  test "wsAlreadyLinked → fix しない":
+  test "wsAlreadyLinked -> no fix":
     let r = CheckResult(path: "/tmp", state: wsAlreadyLinked)
     check not fix(r)
 
-  test "wsRealDirExists → fix しない":
+  test "wsRealDirExists -> no fix":
     let r = CheckResult(path: "/tmp", state: wsRealDirExists)
     check not fix(r)
 
@@ -207,25 +207,25 @@ suite "findAllDirs":
   setup: setup()
   teardown: cleanup()
 
-  test "ネストしたディレクトリを再帰的に検出":
+  test "detects nested directories recursively":
     createDir(TestBase / "a" / "b")
     createDir(TestBase / "c")
     let dirs = findAllDirs(TestBase)
     check dirs.len >= 3  # a, a/b, c
 
-  test "隠しディレクトリをスキップ":
+  test "skips hidden directories":
     createDir(TestBase / ".hidden")
     createDir(TestBase / "visible")
     let dirs = findAllDirs(TestBase)
     check dirs.len == 1
     check dirs[0].extractFilename == "visible"
 
-  test "gitリポジトリの中には再帰しない":
+  test "does not recurse into git repositories":
     createDir(TestBase / "repo" / ".git" / "objects")
     createDir(TestBase / "repo" / "src")
     createDir(TestBase / "other")
     let dirs = findAllDirs(TestBase)
-    # repo は含む、repo/src は含まない（.git dir があるので再帰停止）、other は含む
+    # repo is included, repo/src is not (recursion stops at .git dir), other is included
     var names: seq[string]
     for d in dirs:
       names.add(d.extractFilename)
@@ -233,7 +233,7 @@ suite "findAllDirs":
     check "other" in names
     check "src" notin names
 
-  test "worktree の中には再帰しない":
+  test "does not recurse into worktrees":
     let wt = TestBase / "wt"
     createDir(wt / "src")
     writeFile(wt / ".git", "gitdir: /tmp/fake")
@@ -244,7 +244,7 @@ suite "findAllDirs":
     check "wt" in names
     check "src" notin names
 
-  test "空ディレクトリ → 空リスト":
+  test "empty directory -> empty list":
     let dirs = findAllDirs(TestBase)
     check dirs.len == 0
 
@@ -256,7 +256,7 @@ suite "findWorktreesForMainRepo":
   setup: setup()
   teardown: cleanup()
 
-  test "本体リポに属するworktreeを検出":
+  test "detects worktrees belonging to main repo":
     let mainRepo = TestBase / "main"
     createDir(mainRepo / ".git" / "worktrees" / "wt1")
     createDir(mainRepo / ".git" / "worktrees" / "wt2")
@@ -269,7 +269,7 @@ suite "findWorktreesForMainRepo":
     let found = findWorktreesForMainRepo(mainRepo, TestBase)
     check found.len == 2
 
-  test "別リポのworktreeは含まない":
+  test "excludes worktrees from other repos":
     let repo1 = TestBase / "repo1"
     let repo2 = TestBase / "repo2"
     createDir(repo1 / ".git" / "worktrees" / "wt")
@@ -283,7 +283,7 @@ suite "findWorktreesForMainRepo":
     let found = findWorktreesForMainRepo(repo1, TestBase)
     check found.len == 1
 
-  test "ネストしたディレクトリ内のworktreeも検出":
+  test "detects worktrees in nested directories":
     let sub = TestBase / "sub"
     let mainRepo = sub / "repo"
     createDir(mainRepo / ".git" / "worktrees" / "wt")

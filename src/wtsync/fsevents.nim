@@ -87,8 +87,8 @@ proc FSEventStreamRelease(
 ) {.importc, header: "<CoreServices/CoreServices.h>".}
 
 proc startWatch*(path: string, callback: FSEventStreamCallback, info: pointer = nil, latency: float = 0.5) =
-  ## path を再帰監視し、イベント発生時に callback を呼ぶ。ブロッキング。
-  ## info: callback の clientCallBackInfo に渡すポインタ
+  ## Recursively watches path and calls callback on events. Blocking.
+  ## info: pointer passed as clientCallBackInfo to the callback
   var cfStr = CFStringCreateWithCString(nil, cstring(path), kCFStringEncodingUTF8)
   var cfStrPtr = cast[pointer](cfStr)
   let pathsToWatch = CFArrayCreate(nil, addr cfStrPtr, 1, nil)

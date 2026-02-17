@@ -25,7 +25,7 @@ proc resolveMainRepo*(worktreePath: string): string =
   if not content.startsWith("gitdir:"):
     return ""
   var gitdir = content["gitdir:".len..^1].strip()
-  # 相対パスの場合、worktreeディレクトリ基準で解決
+  # Resolve relative paths based on the worktree directory
   if not gitdir.isAbsolute:
     gitdir = worktreePath / gitdir
   # .git/worktrees/name → .git → repo root
@@ -59,7 +59,7 @@ proc check*(path: string): CheckResult =
       let target = expandSymlink(wtWorkspace)
       let absTarget = if target.isAbsolute: target
                       else: normalizedPath(wtWorkspace.parentDir / target)
-      # /tmp → /private/tmp 等のシンボリックリンク解決のため expandFilename で比較
+      # Use expandFilename for comparison to resolve symlinks like /tmp -> /private/tmp
       let resolvedTarget = try: expandFilename(absTarget)
                            except OSError: normalizedPath(absTarget)
       let resolvedExpected = try: expandFilename(mainWorkspace)
@@ -89,21 +89,21 @@ proc fix*(r: CheckResult): bool =
     return false
 
 proc findAllDirs*(root: string): seq[string] =
-  ## 再帰的にディレクトリを走査。隠しディレクトリはスキップ。
-  ## gitリポジトリ・worktreeの中には再帰しない。
+  ## Recursively walks directories. Skips hidden directories.
+  ## Does not recurse into git repositories or worktrees.
   for kind, path in walkDir(root):
     if kind != pcDir and kind != pcLinkToDir:
       continue
     if path.extractFilename.startsWith("."):
       continue
     result.add(path)
-    # gitリポジトリ/worktreeの中には再帰不要
+    # No need to recurse into git repositories/worktrees
     let gitPath = path / ".git"
     if not fileExists(gitPath) and not dirExists(gitPath):
       result.add(findAllDirs(path))
 
 proc findWorktreesForMainRepo*(mainRepo: string, searchRoot: string): seq[string] =
-  ## 指定された本体リポに属する全Worktreeを再帰的に見つける
+  ## Recursively finds all worktrees belonging to the specified main repository
   let normalizedMain = try: expandFilename(mainRepo)
                        except OSError: normalizedPath(mainRepo)
   for dir in findAllDirs(searchRoot):

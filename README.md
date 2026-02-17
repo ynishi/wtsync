@@ -1,68 +1,68 @@
 # wtsync
 
-Git worktree の `workspace/` シンボリックリンクを自動管理するツール。
+A tool that automatically manages `workspace/` symlinks for git worktrees.
 
-`git worktree add` で作成した worktree に、本体リポジトリの `workspace/` ディレクトリへの symlink を自動的に作成・修復します。macOS FSEvents による常駐監視にも対応。
+When you create a worktree with `git worktree add`, wtsync automatically creates and repairs symlinks pointing to the main repository's `workspace/` directory. It also supports persistent monitoring via macOS FSEvents.
 
-## インストール
+## Installation
 
 ```bash
 nimble build
 cp bin/wtsync ~/.local/bin/
 ```
 
-または：
+Or:
 
 ```bash
 nimble install_local
 ```
 
-**要件**: Nim >= 2.2.6, macOS（FSEvents API を使用）
+**Requirements**: Nim >= 2.2.6, macOS (uses FSEvents API)
 
-## 使い方
+## Usage
 
 ```bash
-# 単一ディレクトリの確認・修復
+# Check/fix a single directory
 wtsync check [path]
 
-# ~/projects 配下の全 worktree を一括修復
+# Scan and fix all worktrees under ~/projects
 wtsync fix [root]
 
-# 全 worktree の状態表示（変更なし）
+# Show status of all worktrees (read-only)
 wtsync status [root]
 
-# FSEvents で監視し、新規 worktree を自動リンク
+# Watch for new worktrees via FSEvents and auto-link
 wtsync watch [root]
 ```
 
-デフォルトの `root` は `~/projects` です。
+Default `root` is `~/projects`.
 
-## デーモン（launchd）
+## Daemon (launchd)
 
 ```bash
-wtsync daemon install      # インストール＆起動
-wtsync daemon uninstall    # 停止＆削除
-wtsync daemon restart      # 再起動（バイナリ更新後に）
-wtsync daemon status       # 稼働状態を確認
-wtsync daemon log          # ログ表示
+wtsync daemon install      # Install and start
+wtsync daemon uninstall    # Stop and remove
+wtsync daemon restart      # Restart (after binary update)
+wtsync daemon status       # Show running status
+wtsync daemon log          # Show logs
 ```
 
-## 動作の仕組み
+## How It Works
 
-1. worktree の `.git` ファイルから `gitdir:` を読み、本体リポジトリのパスを逆算
-2. 本体リポに `workspace/` があれば、worktree 側に symlink を作成
-3. `watch` モードでは FSEvents でディレクトリ作成イベントを監視し、リアルタイムでリンク
+1. Reads the `gitdir:` entry from the worktree's `.git` file to resolve the main repository path
+2. If the main repo has a `workspace/` directory, creates a symlink in the worktree
+3. In `watch` mode, monitors directory creation events via FSEvents and links in real-time
 
-### 状態判定
+### State Definitions
 
-| 状態 | 意味 |
-|------|------|
-| `wsAlreadyLinked` | 正しい symlink が存在 |
-| `wsNeedsLink` | symlink 未作成 → `fix` で作成 |
-| `wsBrokenLink` | symlink 先が不正 → `fix` で再作成 |
-| `wsRealDirExists` | 実ディレクトリが存在（警告のみ） |
-| `wsNoWorkspace` | 本体リポに workspace/ なし（スキップ） |
+| State | Meaning |
+|-------|---------|
+| `wsAlreadyLinked` | Correct symlink exists |
+| `wsNeedsLink` | Symlink missing — `fix` will create it |
+| `wsBrokenLink` | Symlink target is wrong — `fix` will recreate it |
+| `wsRealDirExists` | A real directory exists (warning only) |
+| `wsNoWorkspace` | Main repo has no workspace/ (skipped) |
 
-## ライセンス
+## License
 
 MIT

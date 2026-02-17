@@ -1,7 +1,7 @@
 ## wtsync - auto-sync workspace/ symlinks for git worktrees
 ##
-## watch モードで ~/projects/ を FSEvents 監視し、
-## ディレクトリ作成時に自動で workspace/ symlink を作成する。
+## Monitors ~/projects/ via FSEvents in watch mode,
+## automatically creating workspace/ symlinks on directory creation.
 
 import std/[os, strutils, osproc]
 import wtsync/[core, fsevents]
@@ -9,7 +9,7 @@ import wtsync/[core, fsevents]
 const Version = "0.1.0"
 
 # ============================================================================
-# watch コマンド - FSEvents 監視
+# watch command - FSEvents monitoring
 # ============================================================================
 
 type
@@ -24,8 +24,8 @@ proc onFSEvent(
   eventFlags: ptr FSEventStreamEventFlags,
   eventIds: ptr FSEventStreamEventId
 ) {.cdecl, gcsafe.} =
-  # SAFETY: WatchContext はスタック上に生存（startWatch がブロッキング）。
-  # Nim ORC/ARC は非移動GCのため raw pointer 経由のアクセスは安全。
+  # SAFETY: WatchContext lives on the stack (startWatch is blocking).
+  # Nim ORC/ARC is a non-moving GC, so raw pointer access is safe.
   let root = cast[ptr WatchContext](clientCallBackInfo).root
   let paths = cast[ptr UncheckedArray[cstring]](eventPaths)
   let flags = cast[ptr UncheckedArray[FSEventStreamEventFlags]](eventFlags)
@@ -46,8 +46,8 @@ proc onFSEvent(
     let isFile = (eventFlag and kFSEventStreamEventFlagItemIsFile) != 0
     let name = eventPath.extractFilename
 
-    # Case 1: .git ファイルが作成された → Worktree 完成の合図
-    # git worktree add は dir作成 → .git ファイル書き込みの順で動く
+    # Case 1: .git file was created — signals worktree completion
+    # git worktree add creates the dir first, then writes the .git file
     if isFile and name == ".git":
       let worktreeDir = eventPath.parentDir
       if isWorktree(worktreeDir):
@@ -56,8 +56,8 @@ proc onFSEvent(
           echo "linked: ", worktreeDir.extractFilename, "/workspace -> ", r.mainRepo, "/workspace"
       continue
 
-    # Case 2: workspace/ ディレクトリが作られた → 本体リポの workspace/ 新規作成
-    # → その本体リポに属する全 Worktree に symlink を貼る
+    # Case 2: workspace/ directory was created — new workspace/ in the main repo
+    # → Create symlinks in all worktrees belonging to that main repo
     if isDir and name == "workspace":
       let parentDir = eventPath.parentDir
       if dirExists(parentDir / ".git"):
@@ -74,7 +74,7 @@ proc cmdWatch(root: string) =
   startWatch(resolvedRoot, onFSEvent, addr ctx, latency = 0.3)
 
 # ============================================================================
-# CLI コマンド
+# CLI commands
 # ============================================================================
 
 proc cmdCheck(path: string) =
@@ -117,7 +117,7 @@ proc cmdStatus(root: string) =
       echo "[SKIP]    ", name
 
 # ============================================================================
-# daemon コマンド - launchd 管理
+# daemon command - launchd management
 # ============================================================================
 
 const
@@ -169,11 +169,11 @@ proc launchctl(args: varargs[string]): int =
 proc cmdDaemon(sub: string) =
   case sub
   of "install":
-    # plist生成・配置・ロード
+    # Generate, place, and load plist
     createDir(getHomeDir() / plistDir)
     createDir(getHomeDir() / logDir)
     writeFile(plistPath(), generatePlist())
-    # LaunchAgents にシンボリックリンク
+    # Symlink into LaunchAgents
     let agent = agentPath()
     if symlinkExists(agent) or fileExists(agent):
       removeFile(agent)
@@ -196,7 +196,7 @@ proc cmdDaemon(sub: string) =
   of "restart":
     let agent = agentPath()
     discard launchctl("unload", agent)
-    # plist再生成（バイナリパス更新に対応）
+    # Regenerate plist (handles binary path updates)
     createDir(getHomeDir() / plistDir)
     createDir(getHomeDir() / logDir)
     writeFile(plistPath(), generatePlist())
