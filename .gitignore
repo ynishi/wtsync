@@ -5,3 +5,6 @@ tests/test_wtsync
 # Nim cache
 nimcache/
 nimblecache/
+
+# Local workspace
+workspace/
