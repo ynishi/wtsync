@@ -1,77 +1,49 @@
 ## wtsync - auto-sync workspace/ symlinks for git worktrees
 ##
-## Monitors ~/projects/ via FSEvents in watch mode,
+## Monitors ~/projects/ in watch mode (FSEvents on macOS, inotify on Linux),
 ## automatically creating workspace/ symlinks on directory creation.
 
-import std/[os, strutils, osproc]
-import wtsync/[core, fsevents]
+import std/os
+import wtsync/[core, daemon, watcher]
 
 const Version = "0.1.0"
 
 # ============================================================================
-# watch command - FSEvents monitoring
+# watch command - filesystem monitoring
 # ============================================================================
 
-type
-  WatchContext = object
-    root: string
+proc onCreated(root, path: string, isDir: bool) =
+  let name = path.extractFilename
 
-proc onFSEvent(
-  streamRef: ConstFSEventStreamRef,
-  clientCallBackInfo: pointer,
-  numEvents: csize_t,
-  eventPaths: pointer,
-  eventFlags: ptr FSEventStreamEventFlags,
-  eventIds: ptr FSEventStreamEventId
-) {.cdecl, gcsafe.} =
-  # SAFETY: WatchContext lives on the stack (startWatch is blocking).
-  # Nim ORC/ARC is a non-moving GC, so raw pointer access is safe.
-  let root = cast[ptr WatchContext](clientCallBackInfo).root
-  let paths = cast[ptr UncheckedArray[cstring]](eventPaths)
-  let flags = cast[ptr UncheckedArray[FSEventStreamEventFlags]](eventFlags)
+  # Case 1: .git file was created — signals worktree completion
+  # git worktree add creates the dir first, then writes the .git file
+  if not isDir and name == ".git":
+    let worktreeDir = path.parentDir
+    if isWorktree(worktreeDir):
+      let r = check(worktreeDir)
+      if fix(r):
+        echo "linked: ", worktreeDir.extractFilename, "/workspace -> ", r.mainRepo, "/workspace"
+        flushFile(stdout)
+    return
 
-  for i in 0..<numEvents:
-    let eventFlag = flags[i]
-    let eventPath = $paths[i]
-    let isCreated = (eventFlag and kFSEventStreamEventFlagItemCreated) != 0
-
-    when defined(debug):
-      let hexFlag = "0x" & cast[uint32](eventFlag).toHex(8)
-      stderr.writeLine "[debug] ", eventPath, " flags=", hexFlag
-
-    if not isCreated:
-      continue
-
-    let isDir = (eventFlag and kFSEventStreamEventFlagItemIsDir) != 0
-    let isFile = (eventFlag and kFSEventStreamEventFlagItemIsFile) != 0
-    let name = eventPath.extractFilename
-
-    # Case 1: .git file was created — signals worktree completion
-    # git worktree add creates the dir first, then writes the .git file
-    if isFile and name == ".git":
-      let worktreeDir = eventPath.parentDir
-      if isWorktree(worktreeDir):
-        let r = check(worktreeDir)
+  # Case 2: workspace/ directory was created — new workspace/ in the main repo
+  # → Create symlinks in all worktrees belonging to that main repo
+  if isDir and name == "workspace":
+    let parentDir = path.parentDir
+    if dirExists(parentDir / ".git"):
+      let worktrees = findWorktreesForMainRepo(parentDir, root)
+      for wt in worktrees:
+        let r = check(wt)
         if fix(r):
-          echo "linked: ", worktreeDir.extractFilename, "/workspace -> ", r.mainRepo, "/workspace"
-      continue
-
-    # Case 2: workspace/ directory was created — new workspace/ in the main repo
-    # → Create symlinks in all worktrees belonging to that main repo
-    if isDir and name == "workspace":
-      let parentDir = eventPath.parentDir
-      if dirExists(parentDir / ".git"):
-        let worktrees = findWorktreesForMainRepo(parentDir, root)
-        for wt in worktrees:
-          let r = check(wt)
-          if fix(r):
-            echo "linked: ", wt.extractFilename, "/workspace -> ", r.mainRepo, "/workspace"
+          echo "linked: ", wt.extractFilename, "/workspace -> ", r.mainRepo, "/workspace"
+          flushFile(stdout)
 
 proc cmdWatch(root: string) =
   let resolvedRoot = expandFilename(root)
-  var ctx = WatchContext(root: resolvedRoot)
   echo "wtsync: watching ", resolvedRoot
-  startWatch(resolvedRoot, onFSEvent, addr ctx, latency = 0.3)
+  flushFile(stdout)
+  watch(resolvedRoot, proc(path: string, isDir: bool) =
+    onCreated(resolvedRoot, path, isDir), latency = 0.3)
 
 # ============================================================================
 # CLI commands
@@ -117,121 +89,6 @@ proc cmdStatus(root: string) =
       echo "[SKIP]    ", name
 
 # ============================================================================
-# daemon command - launchd management
-# ============================================================================
-
-const
-  plistLabel = "com.wtsync.watch"
-  plistDir = ".local/share/wtsync"
-  plistName = "com.wtsync.watch.plist"
-  logDir = ".local/var/log"
-
-proc plistPath(): string =
-  getHomeDir() / plistDir / plistName
-
-proc agentPath(): string =
-  getHomeDir() / "Library/LaunchAgents" / plistName
-
-proc xmlEscape(s: string): string =
-  s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
-
-proc generatePlist(): string =
-  let bin = getAppFilename()
-  let logBase = getHomeDir() / logDir
-  result = """<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>""" & xmlEscape(plistLabel) & """</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>""" & xmlEscape(bin) & """</string>
-        <string>watch</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>""" & xmlEscape(logBase / "wtsync.log") & """</string>
-    <key>StandardErrorPath</key>
-    <string>""" & xmlEscape(logBase / "wtsync.err") & """</string>
-</dict>
-</plist>
-"""
-
-proc launchctl(args: varargs[string]): int =
-  let p = startProcess("launchctl", args = @args, options = {poUsePath})
-  result = p.waitForExit
-  p.close()
-
-proc cmdDaemon(sub: string) =
-  case sub
-  of "install":
-    # Generate, place, and load plist
-    createDir(getHomeDir() / plistDir)
-    createDir(getHomeDir() / logDir)
-    writeFile(plistPath(), generatePlist())
-    # Symlink into LaunchAgents
-    let agent = agentPath()
-    if symlinkExists(agent) or fileExists(agent):
-      removeFile(agent)
-    createSymlink(plistPath(), agent)
-    if launchctl("load", agent) == 0:
-      echo "installed and started"
-    else:
-      echo "installed but failed to start"
-
-  of "uninstall":
-    let agent = agentPath()
-    if fileExists(agent) or symlinkExists(agent):
-      discard launchctl("unload", agent)
-      removeFile(agent)
-    let plist = plistPath()
-    if fileExists(plist):
-      removeFile(plist)
-    echo "uninstalled"
-
-  of "restart":
-    let agent = agentPath()
-    discard launchctl("unload", agent)
-    # Regenerate plist (handles binary path updates)
-    createDir(getHomeDir() / plistDir)
-    createDir(getHomeDir() / logDir)
-    writeFile(plistPath(), generatePlist())
-    if not symlinkExists(agent) and not fileExists(agent):
-      createSymlink(plistPath(), agent)
-    if launchctl("load", agent) == 0:
-      echo "restarted"
-    else:
-      echo "failed to restart"
-
-  of "status":
-    let (output, exitCode) = execCmdEx("launchctl list")
-    if exitCode == 0:
-      for line in output.splitLines:
-        if plistLabel in line:
-          let parts = line.strip().split('\t')
-          if parts.len >= 1 and parts[0] != "-":
-            echo "running (pid ", parts[0], ")"
-          else:
-            echo "loaded but not running"
-          return
-    echo "not running"
-
-  of "log":
-    let logFile = getHomeDir() / logDir / "wtsync.log"
-    if fileExists(logFile):
-      echo readFile(logFile)
-    else:
-      echo "no log file"
-
-  else:
-    echo "Usage: wtsync daemon {install|uninstall|restart|status|log}"
-    quit(1)
-
-# ============================================================================
 # main
 # ============================================================================
 
@@ -243,7 +100,7 @@ proc printUsage() =
   echo "  wtsync fix [root]            Scan and fix all worktrees under root"
   echo "  wtsync status [root]         Show status of all worktrees (read-only)"
   echo "  wtsync watch [root]          Watch for new worktrees and auto-link"
-  echo "  wtsync daemon install        Install and start launchd daemon"
+  echo "  wtsync daemon install        Install and start daemon (launchd/systemd)"
   echo "  wtsync daemon uninstall      Stop and remove daemon"
   echo "  wtsync daemon restart        Restart daemon (reflects binary updates)"
   echo "  wtsync daemon status         Show daemon status"
